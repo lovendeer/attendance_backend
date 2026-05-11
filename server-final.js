@@ -138,9 +138,9 @@ const UNITS_DATA = [
     course: 'Mathematics and Computer Science',
     instructor: 'Mr. Mwai',
     location: { 
-      latitude: -1.101684,
-      longitude: 37.015038,
-      radius: 100
+      latitude: -1.098603,
+      longitude: 37.013061,
+      radius: 1000
     },
     building: 'Science Complex',
     room: 'PAM LAB B',
