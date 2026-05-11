@@ -104,8 +104,8 @@ const UNITS_DATA = [
     course: 'Mathematics and Computer Science',
     instructor: 'Mr. Oyugi',
     location: { 
-      latitude: -1.1009621,
-      longitude: 37.0167747, 
+      latitude: -1.098628,
+      longitude: 37.013109, 
       radius: 100
     },
     building: 'Science Complex',
