@@ -1,9 +1,9 @@
-// backend/server-final.js - WITH MONGODB ATLAS (Permanent Storage)
+﻿// backend/server-final.js
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
+const os = require('os');
 
 const app = express();
 app.use(cors({
@@ -12,92 +12,24 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ============================================
-// MONGODB ATLAS CONNECTION
-// ============================================
-// REPLACE THIS WITH YOUR ACTUAL CONNECTION STRING FROM MONGODB ATLAS
-const MONGODB_URI = 'mongodb+srv://attendance_admin:425254@attendancecluster.axmgyjz.mongodb.net/?appName=AttendanceCluster';
-
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB Atlas connected successfully'))
-  .catch(err => {
-    console.error('❌ MongoDB connection error:', err.message);
-    console.log('💡 Make sure you have:');
-    console.log('   1. Created a MongoDB Atlas account');
-    console.log('   2. Created a cluster (M0 free tier)');
-    console.log('   3. Added 0.0.0.0/0 to Network Access');
-    console.log('   4. Created a database user');
-    console.log('   5. Updated the connection string above');
-    process.exit(1);
-  });
-
-// ============================================
-// MONGODB SCHEMAS
-// ============================================
-
-// Student Schema
-const studentSchema = new mongoose.Schema({
-  studentId: { type: String, required: true, unique: true },
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  course: { type: String, default: 'Computer Science' },
-  registrationDate: { type: Date, default: Date.now }
-});
-
-// Lecturer Schema
-const lecturerSchema = new mongoose.Schema({
-  lecturerId: { type: String, required: true, unique: true },
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  units: [{ type: String }]
-});
-
-// Unit Schema
-const unitSchema = new mongoose.Schema({
-  _id: { type: String, required: true },
-  className: { type: String, required: true },
-  course: { type: String, required: true },
-  instructor: { type: String, required: true },
-  location: {
-    latitude: { type: Number, required: true },
-    longitude: { type: Number, required: true },
-    radius: { type: Number, default: 100 }
-  },
-  building: String,
-  room: String,
-  schedule: {
-    days: [String],
-    time: String
+// Get ALL local IP addresses
+function getAllIPs() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        ips.push({ name, ip: iface.address });
+      }
+    }
   }
-});
-
-// Attendance Schema
-const attendanceSchema = new mongoose.Schema({
-  studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
-  classId: { type: String, required: true },
-  unitName: String,
-  instructor: String,
-  timestamp: { type: Date, default: Date.now },
-  location: {
-    latitude: Number,
-    longitude: Number
-  },
-  distanceFromClass: Number,
-  status: { type: String, enum: ['present', 'late'], default: 'present' }
-});
-
-// Create Models
-const Student = mongoose.model('Student', studentSchema);
-const Lecturer = mongoose.model('Lecturer', lecturerSchema);
-const Unit = mongoose.model('Unit', unitSchema);
-const Attendance = mongoose.model('Attendance', attendanceSchema);
+  return ips;
+}
 
 // ============================================
-// YOUR UNITS DATA
+// YOUR UNITS WITH LECTURERS
 // ============================================
-const UNITS_DATA = [
+const UNITS = [
   {
     _id: '1',
     className: 'Mobile Computing',
@@ -121,9 +53,9 @@ const UNITS_DATA = [
     course: 'Mathematics and Computer Science',
     instructor: 'Mr. Oyugi',
     location: { 
-      latitude: -1.098638,
-      longitude: 37.013085,
-      radius: 1000
+      latitude: -1.101684,
+      longitude: 37.015038,
+      radius: 100
     },
     building: 'Science Complex',
     room: 'PAM LAB B',
@@ -138,9 +70,9 @@ const UNITS_DATA = [
     course: 'Mathematics and Computer Science',
     instructor: 'Mr. Mwai',
     location: { 
-      latitude: -1.098603,
-      longitude: 37.013061,
-      radius: 1000
+      latitude: -1.101684,
+      longitude: 37.015038,
+      radius: 100
     },
     building: 'Science Complex',
     room: 'PAM LAB B',
@@ -151,56 +83,41 @@ const UNITS_DATA = [
   }
 ];
 
-// ============================================
-// INITIALIZE DATABASE WITH SAMPLE DATA
-// ============================================
-async function initializeDatabase() {
-  try {
-    // Check and create units
-    const unitCount = await Unit.countDocuments();
-    if (unitCount === 0) {
-      console.log('📚 Creating units...');
-      await Unit.insertMany(UNITS_DATA);
-      console.log('✅ Units created successfully');
-    }
+// In-memory database
+let users = [];
+let attendance = [];
 
-    // Check and create lecturers
-    const lecturerCount = await Lecturer.countDocuments();
-    if (lecturerCount === 0) {
-      console.log('👨‍🏫 Creating lecturer accounts...');
-      await Lecturer.insertMany([
-        {
-          lecturerId: 'LEC001',
-          name: 'Mr. Oyugi',
-          email: 'oyugi@jkuat.ac.ke',
-          password: bcrypt.hashSync('lecturer123', 10),
-          units: ['Mobile Computing', 'Cloud Computing']
-        },
-        {
-          lecturerId: 'LEC002',
-          name: 'Mr. Mwai',
-          email: 'mwai@jkuat.ac.ke',
-          password: bcrypt.hashSync('lecturer123', 10),
-          units: ['Simulation and Modelling']
-        }
-      ]);
-      console.log('✅ Lecturer accounts created');
-    }
+// ============================================
+// LECTURER PORTAL - NEW FEATURE
+// ============================================
 
-    console.log('✅ Database ready!');
-  } catch (error) {
-    console.error('Error initializing database:', error);
+// Lecturer accounts
+let lecturers = [
+  {
+    _id: 'lec1',
+    lecturerId: 'LEC001',
+    name: 'Mr. Oyugi',
+    email: 'oyugi@jkuat.ac.ke',
+    password: bcrypt.hashSync('lecturer123', 10),
+    units: ['Mobile Computing', 'Cloud Computing']
+  },
+  {
+    _id: 'lec2',
+    lecturerId: 'LEC002',
+    name: 'Mr. Mwai',
+    email: 'mwai@jkuat.ac.ke',
+    password: bcrypt.hashSync('lecturer123', 10),
+    units: ['Simulation and Modelling']
   }
-}
+];
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
+// Student ID validation function
 function isValidStudentId(studentId) {
   const pattern = /^[a-z]+-\d+-\d+\/\d+$/i;
   return pattern.test(studentId);
 }
 
+// Helper function to calculate distance
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
   const φ1 = lat1 * Math.PI/180;
@@ -214,6 +131,7 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+// Authentication middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -237,11 +155,13 @@ function authenticateToken(req, res, next) {
 
 // Root endpoint
 app.get('/', (req, res) => {
+  const allIPs = getAllIPs();
   res.json({
     message: 'Attendance System Server - JKUAT University',
     status: 'online',
-    units: UNITS_DATA.map(u => ({ name: u.className, instructor: u.instructor })),
-    database: 'MongoDB Atlas - Permanent Storage'
+    units: UNITS.map(u => ({ name: u.className, instructor: u.instructor })),
+    availableIPs: allIPs,
+    useThisForPhone: allIPs.length > 0 ? `http://${allIPs[0].ip}:3000` : 'Check network connection'
   });
 });
 
@@ -262,19 +182,22 @@ app.post('/api/auth/register', async (req, res) => {
       });
     }
     
-    const existingUser = await Student.findOne({ $or: [{ studentId }, { email }] });
+    const existingUser = users.find(u => u.studentId === studentId || u.email === email);
     if (existingUser) {
       return res.status(400).json({ error: 'Student ID or email already exists' });
     }
     
-    const newUser = new Student({
+    const newUser = {
+      _id: (users.length + 1).toString(),
       studentId,
       name,
       email,
-      password: bcrypt.hashSync(password, 10)
-    });
+      password: bcrypt.hashSync(password, 10),
+      course: 'Computer Science',
+      registrationDate: new Date()
+    };
     
-    await newUser.save();
+    users.push(newUser);
     
     console.log('✅ Student created successfully:', studentId);
     
@@ -294,13 +217,13 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Student Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', (req, res) => {
   try {
     const { studentId, password } = req.body;
     
     console.log('🔐 Student Login attempt:', studentId);
     
-    const user = await Student.findOne({ studentId });
+    const user = users.find(u => u.studentId === studentId);
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -341,17 +264,16 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Get all units for student
-app.get('/api/classes/my-classes', authenticateToken, async (req, res) => {
+app.get('/api/classes/my-classes', authenticateToken, (req, res) => {
   if (req.user.role !== 'student') {
     return res.status(403).json({ error: 'Access denied. Student only.' });
   }
   console.log('📚 Sending units to student:', req.user.studentId);
-  const units = await Unit.find();
-  res.json(units);
+  res.json(UNITS);
 });
 
 // Mark attendance for student
-app.post('/api/attendance/mark', authenticateToken, async (req, res) => {
+app.post('/api/attendance/mark', authenticateToken, (req, res) => {
   try {
     if (req.user.role !== 'student') {
       return res.status(403).json({ error: 'Access denied. Student only.' });
@@ -366,7 +288,7 @@ app.post('/api/attendance/mark', authenticateToken, async (req, res) => {
     console.log(`Student: ${req.user.studentId}`);
     console.log(`Your Location: ${location.latitude}, ${location.longitude}`);
     
-    const unit = await Unit.findById(classId);
+    const unit = UNITS.find(u => u._id === classId);
     if (!unit) {
       return res.status(404).json({ error: 'Unit not found' });
     }
@@ -396,14 +318,12 @@ app.post('/api/attendance/mark', authenticateToken, async (req, res) => {
     
     console.log(`✅ SUCCESS: Within range!`);
     
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const alreadyMarked = await Attendance.findOne({
-      studentId,
-      classId,
-      timestamp: { $gte: today }
-    });
+    const today = new Date().toDateString();
+    const alreadyMarked = attendance.find(a =>
+      a.studentId === studentId &&
+      a.classId === classId &&
+      new Date(a.timestamp).toDateString() === today
+    );
     
     if (alreadyMarked) {
       console.log(`⚠️ Already marked today`);
@@ -412,17 +332,19 @@ app.post('/api/attendance/mark', authenticateToken, async (req, res) => {
       });
     }
     
-    const attendanceRecord = new Attendance({
+    const attendanceRecord = {
+      _id: (attendance.length + 1).toString(),
       studentId,
       classId,
       unitName: unit.className,
       instructor: unit.instructor,
+      timestamp: new Date(),
       location,
       distanceFromClass: Math.round(distance),
       status: 'present'
-    });
+    };
     
-    await attendanceRecord.save();
+    attendance.push(attendanceRecord);
     
     console.log(`✅ Attendance marked successfully!`);
     console.log('========================================\n');
@@ -444,7 +366,7 @@ app.post('/api/attendance/mark', authenticateToken, async (req, res) => {
 });
 
 // Get student attendance report
-app.get('/api/reports/attendance', authenticateToken, async (req, res) => {
+app.get('/api/reports/attendance', authenticateToken, (req, res) => {
   try {
     if (req.user.role !== 'student') {
       return res.status(403).json({ error: 'Access denied. Student only.' });
@@ -452,10 +374,10 @@ app.get('/api/reports/attendance', authenticateToken, async (req, res) => {
     
     const studentId = req.user.userId;
     
-    const userAttendance = await Attendance.find({ studentId }).sort({ timestamp: -1 });
+    const userAttendance = attendance.filter(a => a.studentId === studentId);
     const enrichedAttendance = userAttendance.map(a => ({
-      ...a.toObject(),
-      classId: { className: a.unitName, instructor: a.instructor }
+      ...a,
+      classId: UNITS.find(u => u._id === a.classId) || { className: a.unitName, instructor: a.instructor }
     }));
     
     const summary = {
@@ -484,17 +406,17 @@ app.get('/api/reports/attendance', authenticateToken, async (req, res) => {
 });
 
 // ============================================
-// LECTURER ROUTES
+// LECTURER ROUTES - NEW
 // ============================================
 
 // Lecturer Login
-app.post('/api/lecturer/login', async (req, res) => {
+app.post('/api/lecturer/login', (req, res) => {
   try {
     const { lecturerId, password } = req.body;
     
     console.log('📚 Lecturer login attempt:', lecturerId);
     
-    const lecturer = await Lecturer.findOne({ lecturerId });
+    const lecturer = lecturers.find(l => l.lecturerId === lecturerId);
     if (!lecturer) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -537,7 +459,7 @@ app.post('/api/lecturer/login', async (req, res) => {
 });
 
 // Get lecturer's dashboard summary
-app.get('/api/lecturer/dashboard', authenticateToken, async (req, res) => {
+app.get('/api/lecturer/dashboard', authenticateToken, (req, res) => {
   try {
     if (req.user.role !== 'lecturer') {
       return res.status(403).json({ error: 'Access denied. Lecturer only.' });
@@ -546,29 +468,22 @@ app.get('/api/lecturer/dashboard', authenticateToken, async (req, res) => {
     const lecturerUnits = req.user.units || [];
     const dashboardData = {};
     
-    for (const unitName of lecturerUnits) {
-      const unit = await Unit.findOne({ className: unitName });
-      if (unit) {
-        const unitAttendance = await Attendance.find({ classId: unit._id });
-        const uniqueStudents = [...new Set(unitAttendance.map(a => a.studentId.toString()))];
-        
-        dashboardData[unitName] = {
-          totalAttendance: unitAttendance.length,
-          uniqueStudents: uniqueStudents.length,
-          presentCount: unitAttendance.filter(a => a.status === 'present').length,
-          lateCount: unitAttendance.filter(a => a.status === 'late').length
-        };
-      }
-    }
-    
-    const allAttendance = await Attendance.find({
-      unitName: { $in: lecturerUnits }
+    lecturerUnits.forEach(unitName => {
+      const unitAttendance = attendance.filter(a => a.unitName === unitName);
+      const uniqueStudents = [...new Set(unitAttendance.map(a => a.studentId))];
+      
+      dashboardData[unitName] = {
+        totalAttendance: unitAttendance.length,
+        uniqueStudents: uniqueStudents.length,
+        presentCount: unitAttendance.filter(a => a.status === 'present').length,
+        lateCount: unitAttendance.filter(a => a.status === 'late').length
+      };
     });
     
     res.json({
       lecturer: req.user.name,
       totalUnits: lecturerUnits.length,
-      totalAttendanceRecords: allAttendance.length,
+      totalAttendanceRecords: attendance.filter(a => lecturerUnits.includes(a.unitName)).length,
       unitStats: dashboardData,
       generatedAt: new Date()
     });
@@ -578,8 +493,65 @@ app.get('/api/lecturer/dashboard', authenticateToken, async (req, res) => {
   }
 });
 
+// Get detailed lecturer reports for their units
+app.get('/api/lecturer/reports', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'lecturer') {
+      return res.status(403).json({ error: 'Access denied. Lecturer only.' });
+    }
+    
+    const lecturerUnits = req.user.units || [];
+    const unitReports = {};
+    let allAttendance = [];
+    
+    lecturerUnits.forEach(unitName => {
+      const unit = UNITS.find(u => u.className === unitName);
+      const unitAttendance = attendance.filter(a => a.unitName === unitName);
+      
+      unitReports[unitName] = {
+        unitId: unit?._id || 'N/A',
+        instructor: unit?.instructor || req.user.name,
+        totalStudents: unitAttendance.length,
+        present: unitAttendance.filter(a => a.status === 'present').length,
+        late: unitAttendance.filter(a => a.status === 'late').length,
+        records: unitAttendance.map(a => {
+          const student = users.find(u => u._id === a.studentId);
+          return {
+            studentName: student?.name || 'Unknown',
+            studentId: student?.studentId || 'Unknown',
+            timestamp: a.timestamp,
+            status: a.status,
+            distance: a.distanceFromClass,
+            location: a.location
+          };
+        })
+      };
+      allAttendance = [...allAttendance, ...unitAttendance];
+    });
+    
+    const summary = {
+      totalUnits: lecturerUnits.length,
+      totalAttendance: allAttendance.length,
+      totalPresent: allAttendance.filter(a => a.status === 'present').length,
+      totalLate: allAttendance.filter(a => a.status === 'late').length
+    };
+    
+    res.json({
+      lecturer: req.user.name,
+      lecturerId: req.user.lecturerId,
+      units: lecturerUnits,
+      summary: summary,
+      unitReports: unitReports,
+      generatedAt: new Date()
+    });
+  } catch (error) {
+    console.error('Error getting lecturer reports:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get attendance for a specific unit (for lecturer)
-app.get('/api/lecturer/unit/:unitName', authenticateToken, async (req, res) => {
+app.get('/api/lecturer/unit/:unitName', authenticateToken, (req, res) => {
   try {
     if (req.user.role !== 'lecturer') {
       return res.status(403).json({ error: 'Access denied. Lecturer only.' });
@@ -592,15 +564,11 @@ app.get('/api/lecturer/unit/:unitName', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'You are not assigned to this unit.' });
     }
     
-    const unit = await Unit.findOne({ className: unitName });
-    if (!unit) {
-      return res.status(404).json({ error: 'Unit not found' });
-    }
+    const unit = UNITS.find(u => u.className === unitName);
+    const unitAttendance = attendance.filter(a => a.unitName === unitName);
     
-    const unitAttendance = await Attendance.find({ classId: unit._id }).sort({ timestamp: -1 });
-    
-    const studentRecords = await Promise.all(unitAttendance.map(async (a) => {
-      const student = await Student.findById(a.studentId);
+    const studentRecords = unitAttendance.map(a => {
+      const student = users.find(u => u._id === a.studentId);
       return {
         studentName: student?.name || 'Unknown',
         studentId: student?.studentId || 'Unknown',
@@ -609,11 +577,11 @@ app.get('/api/lecturer/unit/:unitName', authenticateToken, async (req, res) => {
         distance: a.distanceFromClass,
         location: a.location
       };
-    }));
+    });
     
     res.json({
       unitName: unitName,
-      instructor: unit.instructor,
+      instructor: unit?.instructor || req.user.name,
       totalRecords: studentRecords.length,
       presentCount: studentRecords.filter(r => r.status === 'present').length,
       lateCount: studentRecords.filter(r => r.status === 'late').length,
@@ -626,15 +594,24 @@ app.get('/api/lecturer/unit/:unitName', authenticateToken, async (req, res) => {
   }
 });
 
-// Get all registered students (lecturer view)
-app.get('/api/admin/students', authenticateToken, async (req, res) => {
+// ============================================
+// UTILITY ENDPOINTS
+// ============================================
+
+// Get all registered students (admin/lecturer view)
+app.get('/api/admin/students', authenticateToken, (req, res) => {
   try {
     if (req.user.role !== 'lecturer') {
       return res.status(403).json({ error: 'Access denied.' });
     }
     
-    const students = await Student.find({}, { password: 0 });
-    res.json(students);
+    const studentList = users.map(u => ({
+      studentId: u.studentId,
+      name: u.name,
+      email: u.email,
+      registrationDate: u.registrationDate
+    }));
+    res.json(studentList);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -644,30 +621,40 @@ app.get('/api/admin/students', authenticateToken, async (req, res) => {
 // START SERVER
 // ============================================
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
+const HOST = '0.0.0.0';
 
-initializeDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log('\n╔═══════════════════════════════════════════════════════════════╗');
-    console.log('║     🎓 JKUAT UNIVERSITY ATTENDANCE SYSTEM - READY 🎓         ║');
-    console.log('║              📀 MongoDB Atlas - Permanent Storage            ║');
-    console.log('╚═══════════════════════════════════════════════════════════════╝');
-    console.log('\n📚 UNITS & LECTURERS:');
-    UNITS_DATA.forEach(unit => {
-      console.log(`   📖 ${unit.className} - ${unit.instructor}`);
-    });
-    console.log(`\n📱 ON YOUR PHONE:`);
-    console.log(`   Update App.js API_URL to your cloud URL`);
-    console.log(`   Example: https://attendance-backend.onrender.com`);
-    console.log('\n📝 STUDENT ID FORMAT:');
-    console.log('   scm-xxx-xxxx/yyyy (e.g., scm-211-0738/2022)');
-    console.log('\n👥 STUDENT TEST ACCOUNTS (Register first):');
-    console.log('   Student ID: scm-211-0738/2022');
-    console.log('   Password: password123');
-    console.log('\n📚 LECTURER ACCOUNTS:');
-    console.log('   👨‍🏫 Mr. Oyugi (LEC001) - Password: lecturer123');
-    console.log('   👨‍🏫 Mr. Mwai (LEC002) - Password: lecturer123');
-    console.log('\n💾 DATABASE: MongoDB Atlas (Permanent Storage)');
-    console.log('\n✅ Server is ready! Waiting for connections...\n');
+app.listen(PORT, HOST, () => {
+  const allIPs = getAllIPs();
+  console.log('\n╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║     🎓 JKUAT UNIVERSITY ATTENDANCE SYSTEM - READY 🎓         ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝');
+  console.log('\n📚 UNITS & LECTURERS:');
+  UNITS.forEach(unit => {
+    console.log(`   📖 ${unit.className} - ${unit.instructor}`);
   });
+  console.log('\n🌐 AVAILABLE NETWORK ADDRESSES:');
+  console.log('   Use the IP that matches your phone\'s WiFi network');
+  console.log('   ─────────────────────────────────────────────');
+  allIPs.forEach(({ name, ip }) => {
+    console.log(`   📡 ${name}: http://${ip}:${PORT}`);
+  });
+  console.log('   ─────────────────────────────────────────────');
+  console.log(`\n📱 ON YOUR PHONE:`);
+  console.log(`   1. Connect to the SAME WiFi as your computer`);
+  console.log(`   2. Open Chrome and try each URL above`);
+  console.log(`   3. Use the IP that works in your App.js`);
+  console.log('\n📝 STUDENT ID FORMAT:');
+  console.log('   Must match pattern: scm-xxx-xxxx/yyyy');
+  console.log('   Example: scm-211-0738/2022');
+  console.log('\n👥 STUDENT TEST ACCOUNTS (Register first):');
+  console.log('   Student ID: scm-211-0738/2022');
+  console.log('   Password: password123');
+  console.log('\n📚 LECTURER ACCOUNTS:');
+  lecturers.forEach(lec => {
+    console.log(`   👨‍🏫 ${lec.name} (${lec.lecturerId})`);
+    console.log(`      Password: lecturer123`);
+    console.log(`      Units: ${lec.units.join(', ')}`);
+  });
+  console.log('\n✅ Server is ready! Waiting for connections...\n');
 });
